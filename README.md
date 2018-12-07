@@ -37,6 +37,6 @@ Just run the script:
 
 # TODO
 
-Make a config file?
-Per group/repo configuration for number of images/jobs?
-Anything else?
+- Make a config file?
+- Per group/repo configuration for number of images/jobs?
+- Anything else?
