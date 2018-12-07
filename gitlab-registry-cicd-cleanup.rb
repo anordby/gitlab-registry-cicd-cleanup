@@ -11,23 +11,34 @@
 # disk space), if artifacts expire is not set -- except last n number of
 # jobs per stage
 
-
+# Install these with "gem install <extension>"
 require "httparty"
+require "json"
+# These are included in Ruby installations
 require "socket"
 require "pp"
-require "json"
 require "fileutils"
 
-puts "----------"
-puts "Performing gitlab registry/jobs cleanup [" + DateTime.now.strftime("%Y-%m-%d %H:%M:%S") + "]"
+# Usage? Just run the script. But remember to adjust the configuration below.
 
 # Configuration
+# Number of jobs with artifacts to keep per stage per project
 $keepjobs=10
+# Number of images from successful deploys per environment to keep per project
 $keepimages=5
-$registry_path="/var/gitlab-registry"
+# Where your Gitlab registry is
+# The default
+$registry_path="/var/opt/gitlab/gitlab-rails/shared/registry"
+# Our path - we keep a separate FS
+#$registry_path="/var/gitlab-registry"
 
 # Read token password from file
 token=File.open("/usr/local/etc/gitlab/token.pwd").read.chomp
+# Or just set it here
+#token="XXX"
+# Fixed API URL
+#$apiurl="https://gitlab.foo.com/api/v4"
+# API URL changing depending on which server it runs
 hostname = Socket.gethostname
 case hostname
 when "gittest0.foo.com"
@@ -38,6 +49,9 @@ else
   fail "Unknown hostname #{hostname}."
 end
 # End Configuration
+
+puts "----------"
+puts "Performing gitlab registry/jobs cleanup [" + DateTime.now.strftime("%Y-%m-%d %H:%M:%S") + "]"
 
 def pageget (upath)
   pdata = []
