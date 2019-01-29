@@ -18,14 +18,18 @@ require "json"
 require "socket"
 require "pp"
 require "fileutils"
+require 'optparse'
 
-# Usage? Just run the script. But remember to adjust the configuration below.
+# Usage? Run the script with --help.
 
 # Configuration
 # Number of jobs with artifacts to keep per stage per project
 $keepjobs=10
 # Number of images from successful deploys per environment to keep per project
 $keepimages=5
+# Minimum number of deployments for image deletion to be done
+# TODO: are they old/current?
+$minimum_deployments=10
 # Where your Gitlab registry is
 # The default
 $registry_path="/var/opt/gitlab/gitlab-rails/shared/registry"
@@ -35,7 +39,6 @@ $registry_path="/var/opt/gitlab/gitlab-rails/shared/registry"
 # Read token password from file
 token=File.open("/usr/local/etc/gitlab/token.pwd").read.chomp
 # Or just set it here
-#token="XXX"
 # Fixed API URL
 #$apiurl="https://gitlab.foo.com/api/v4"
 # API URL changing depending on which server it runs
@@ -49,6 +52,32 @@ else
   fail "Unknown hostname #{hostname}."
 end
 # End Configuration
+
+ARGV.push('--help') if ARGV.empty?
+$options = {}
+optparse = OptionParser.new do |opts|
+  opts.banner = "Usage: gitlab-registry-cicd-cleanup.rb [options]"
+
+  opts.on("-n", "--dryrun", "Dryrun (no changes)") do |a|
+    $options[:dryrun] = a
+  end
+  opts.on("-d", "--debug", "Debug output") do |a|
+    $options[:debug] = a
+  end
+  opts.on("--nodeployments", "Skip deployments") do |a|
+    $options[:nodeployments] = a
+  end
+  opts.on("--nojobs", "Skip job artifacts") do |a|
+    $options[:nojobs] = a
+  end
+  opts.on("-p", "--project PROJECT", "Project name regexp match") do |a|
+    $options[:project] = a
+  end
+  opts.on_tail("--help", "Show this message") do
+    puts opts
+    exit 3
+  end
+end.parse!
 
 puts "----------"
 puts "Performing gitlab registry/jobs cleanup [" + DateTime.now.strftime("%Y-%m-%d %H:%M:%S") + "]"
@@ -86,6 +115,7 @@ def delete_artifact_jobs
   $projects.each do |p|
     id=p["id"]
     $gpath=p["path_with_namespace"]
+    next if $options[:project] and $gpath !~ /#{$options[:project]}/
 #    next unless $gpath == "CarPreparation/hvorerbilen-frontend"
     puts "Doing repo path: #{$gpath} project ID: #{id.to_s}"
     joblist = pageget("/projects/#{id}/jobs")
@@ -105,6 +135,13 @@ def delete_artifact_jobs
       jobs[jstage].push(job)
     end
 
+    if $options[:debug]
+      puts "Data from jobs API:"
+      pp joblist
+      puts "Jobs per env:"
+      pp jobs
+    end
+
     puts "Number of jobs: #{joblist.length.to_s}"
     puts "Jobs per stage:"
     jobs.each_pair do |jstage,jslist|
@@ -118,11 +155,16 @@ def delete_artifact_jobs
           puts "Job ID: " + job["id"].to_s + " (delete?)"
           if job["artifacts_expire_at"].nil? and not job["artifacts"].empty? 
             puts "Really delete project ID #{id} job ID #{jid}, has artifacts and no artifacts_expire_at."
-            delurl = "#{$apiurl}/projects/#{id}/jobs/#{jid}/erase"
-            response = HTTParty.post(delurl, :headers => $headers, :verify => false)
-            puts "Tried to delete job. Got response code: #{response.code.to_s}"
-            puts "Used URL: #{delurl}"
-            pp response.body
+            if $options[:dryrun]
+              puts "Skip deleting job due to dryrun mode."
+            else
+              puts "Do the delete for sure."
+              delurl = "#{$apiurl}/projects/#{id}/jobs/#{jid}/erase"
+              response = HTTParty.post(delurl, :headers => $headers, :verify => false)
+              puts "Tried to delete job. Got response code: #{response.code.to_s}"
+              puts "Used URL: #{delurl}"
+              pp response.body
+            end
           end
         else
           puts "Job ID: " + job["id"].to_s + " (keep)"
@@ -145,6 +187,7 @@ def delete_expired_deployments
     id=p["id"]
     $gpath=p["path_with_namespace"]
 #    next unless $gpath =~ /^CarPreparation\/hvorerbilen/
+    next if $options[:project] and $gpath !~ /#{$options[:project]}/
     rdir="#{$registry_path}/docker/registry/v2/repositories/#{$gpath.downcase}"
     puts "Doing repo path: #{$gpath} project ID: #{id.to_s} rdir #{rdir}"
     if not File.exist?(rdir)
@@ -158,6 +201,17 @@ def delete_expired_deployments
     # Split deployment list per environment.
     # We want to keep n number of successful deployments per environment
     deplist = pageget("/projects/#{id}/deployments")
+
+    if deplist.length < $minimum_deployments
+      puts "Project has less than #{$minimum_deployments} deployments (#{deplist.length.to_s}). Skip deleting anything."
+      ntags=(Dir.entries("#{rdir}/_manifests/tags").length-2).to_s
+      nrevs=(Dir.entries("#{rdir}/_manifests/revisions/sha256").length-2).to_s
+      puts "Found #{ntags} tags and #{nrevs} revisions."
+      lackdeps=true
+    else
+      lackdeps=false
+    end
+
     deployments = {}
     deplist.each do |dep|
       did = dep["id"]
@@ -172,6 +226,12 @@ def delete_expired_deployments
       deployments[env].push(dep)
     end
 
+    if $options[:debug]
+      puts "Data from deployments API:"
+      pp deplist
+      puts "Deployments per env:"
+      pp deployments
+    end
 
     puts "Deployments: " + deplist.length.to_s
     puts "Per env:"
@@ -214,13 +274,19 @@ def delete_expired_deployments
         sha = File.read("#{rdir}/_manifests/tags/#{tent}/current/link").chomp.gsub(/^\w+:/, "")
         keepshahs.push(sha)
       else
-        deleted=true
         puts "Blow tag entry #{tent} .. #{tentfull}"
-        if File.directory?(tentfull)
-          puts "Is a directory and can be blown."
-          FileUtils.rm_rf(tentfull)
+        if $options[:dryrun]
+          puts "Skip deleting tag due to dryrun mode."
+        elsif lackdeps
+          puts "Skip deleting tag due to too few deployments found."
         else
-          puts "Is not a directory?"
+          deleted=true
+          if File.directory?(tentfull)
+            puts "Is a directory and can be blown."
+            FileUtils.rm_rf(tentfull)
+          else
+            puts "Is not a directory?"
+          end
         end
       end
     end
@@ -231,13 +297,19 @@ def delete_expired_deployments
       if keepshahs.include?(sent)
         puts "Keep sha265 #{sent}"
       else
-        deleted=true
         puts "Blow sha265 #{sent} .. #{sentfull}"
-        if File.directory?(sentfull)
-          puts "Is a directory and can be blown."
-          FileUtils.rm_rf(sentfull)
+        if $options[:dryrun]
+          puts "Skip deleting tag due to dryrun mode."
+        elsif lackdeps
+          puts "Skip deleting tag due to too few deployments found."
         else
-          puts "Not a directory?"
+          deleted=true
+          if File.directory?(sentfull)
+            puts "Is a directory and can be blown."
+            FileUtils.rm_rf(sentfull)
+          else
+            puts "Not a directory?"
+          end
         end
       end
     end
@@ -257,8 +329,18 @@ $headers = {
 $projects = pageget("/projects")
 puts "Number of projects: #{$projects.length.to_s}"
 
-delete_artifact_jobs
-delete_expired_deployments
+if $options[:nojobs]
+  puts "Skip handling jobs and artifacts."
+else
+  puts "Do jobs and artifacts now."
+  delete_artifact_jobs
+end
+if $options[:nodeployments]
+  puts "Skip handling deployments."
+else
+  puts "Do deployments now."
+  delete_expired_deployments
+end
 
 
 
