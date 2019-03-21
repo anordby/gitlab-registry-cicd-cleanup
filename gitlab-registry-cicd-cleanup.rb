@@ -20,7 +20,15 @@ require "pp"
 require "fileutils"
 require 'optparse'
 
-# Usage? Run the script with --help.
+# Usage? Run the script without, or use options as below:
+#
+# Usage: gitlab-registry-cicd-cleanup.rb [options]
+#    -n, --dryrun                     Dryrun (no changes)
+#    -d, --debug                      Debug output
+#        --nodeployments              Skip deployments
+#        --nojobs                     Skip job artifacts
+#    -p, --project PROJECT            Project name regexp match
+#        --help                       Show this message
 
 # Configuration
 # Number of jobs with artifacts to keep per stage per project
@@ -53,7 +61,6 @@ else
 end
 # End Configuration
 
-ARGV.push('--help') if ARGV.empty?
 $options = {}
 optparse = OptionParser.new do |opts|
   opts.banner = "Usage: gitlab-registry-cicd-cleanup.rb [options]"
