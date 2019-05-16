@@ -46,9 +46,12 @@ https://gitlab.com/gitlab-com/support-forum/issues/2814
 
 # HISTORY
 
-29.1.2019: Add fix for projects with images in registry but no data in
+2019-01-29: Add fix for projects with images in registry but no data in
 deployments API. From now on we do not delete images in projects where
 there is less than $minimum_deployments (config) deployments.
+
+2019-05-16: Do not strictly compare tags, otherwise some images may
+accidentally get deleted.
 
 # REQUIREMENTS
 
