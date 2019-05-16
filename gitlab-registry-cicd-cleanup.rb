@@ -47,6 +47,7 @@ $registry_path="/var/opt/gitlab/gitlab-rails/shared/registry"
 # Read token password from file
 token=File.open("/usr/local/etc/gitlab/token.pwd").read.chomp
 # Or just set it here
+#token="XXX"
 # Fixed API URL
 #$apiurl="https://gitlab.foo.com/api/v4"
 # API URL changing depending on which server it runs
@@ -276,7 +277,14 @@ def delete_expired_deployments
     Dir.entries("#{rdir}/_manifests/tags").each do |tent|
       next if tent =~ /^\.(|\.)$/
       tentfull="#{rdir}/_manifests/tags/#{tent}"
-      if keeptags.include?(tent)
+      ktag = false
+      keeptags.each do |tag|
+        if tent =~ /#{tag}/
+          ktag = true
+        end
+      end
+#      if keeptags.include?(tent)
+      if ktag
         puts "Keep tag entry #{tent}"
         sha = File.read("#{rdir}/_manifests/tags/#{tent}/current/link").chomp.gsub(/^\w+:/, "")
         keepshahs.push(sha)
